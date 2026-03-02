@@ -1,0 +1,284 @@
+# Payment Domain - Data Layer Design
+
+**Purpose:** Money movement from collector to platform (charges, holds, refunds).
+
+**Database:** `payment_db`
+
+**CDK Stack:** `payment-stack`
+
+---
+
+## Tables
+
+### `payments`
+
+**Partition Key:** `paymentId` (String, UUID)
+**Sort Key:** None
+
+**Attributes:**
+* `id` (String, PK, UUID)
+* `order_id` (String) - Reference to Order domain
+* `collector_user_id` (String) - Reference to Identity domain
+* `amount` (Number) - Payment amount in cents
+* `currency` (String) - "USD"
+* `status` (String) - "pending" | "authorized" | "captured" | "failed" | "refunded"
+* `payment_method_id` (String) - Reference to `payment_methods` table
+* `payment_intent_id` (String, optional) - Stripe PaymentIntent ID
+* `authorized_at` (String, ISO 8601, optional)
+* `captured_at` (String, ISO 8601, optional)
+* `refunded_at` (String, ISO 8601, optional)
+* `refund_amount` (Number, optional) - Amount refunded in cents
+* `failure_reason` (String, optional) - If payment failed
+* `created_at` (String, ISO 8601)
+* `updated_at` (String, ISO 8601)
+
+**GSI:**
+* `GSI1`: `orderId` (PK) - Find payment for an order
+  * **Use Case:** Get payment details for order
+* `GSI2`: `collectorUserId` (PK), `createdAt` (SK) - Collector's payment history
+  * **Use Case:** Collector's payment history page
+* `GSI3`: `status` (PK), `createdAt` (SK) - Find payments by status
+  * **Use Case:** Admin dashboard, payment processing
+
+**TTL:** None
+
+---
+
+### `payment_methods`
+
+**Partition Key:** `userId` (String)
+**Sort Key:** `paymentMethodId` (String)
+
+**Attributes:**
+* `user_id` (String, PK)
+* `payment_method_id` (String, SK, UUID)
+* `type` (String) - "card" | "bank_account"
+* `last4` (String) - Last 4 digits of card/account
+* `brand` (String, optional) - "visa" | "mastercard" | "amex" | "discover"
+* `exp_month` (Number, optional) - Card expiration month
+* `exp_year` (Number, optional) - Card expiration year
+* `is_default` (Boolean) - Default payment method
+* `publisher_id` (String) - Stripe payment method ID
+* `billing_address` (Map, optional)
+  * `street` (String)
+  * `city` (String)
+  * `state` (String)
+  * `zip` (String)
+  * `country` (String)
+* `created_at` (String, ISO 8601)
+
+**GSI:** None
+
+**TTL:** None
+
+---
+
+### `refunds`
+
+**Partition Key:** `paymentId` (String)
+**Sort Key:** `refundId` (String)
+
+**Attributes:**
+* `id` (String, PK, UUID)
+* `payment_id` (String) - Reference to `payments` table
+* `order_id` (String) - Reference to Order domain
+* `collector_user_id` (String) - Reference to Identity domain
+* `amount` (Number) - Refund amount in cents
+* `currency` (String) - "USD"
+* `reason` (String) - Refund reason (customer_request, order_canceled, defective_item, etc.)
+* `status` (String) - "pending" | "processing" | "completed" | "failed"
+* `refund_method` (String) - "original_payment" | "bank_transfer" | "store_credit"
+* `publisher_refund_id` (String, optional) - Stripe refund ID
+* `processed_at` (String, ISO 8601, optional)
+* `failed_at` (String, ISO 8601, optional)
+* `failure_reason` (String, optional)
+* `created_at` (String, ISO 8601)
+* `updated_at` (String, ISO 8601)
+
+**GSI:**
+* `GSI1`: `payment_id` (PK) - Refunds for a payment
+  * **Use Case:** Payment refund history
+* `GSI2`: `order_id` (PK) - Refunds for an order
+  * **Use Case:** Order refund status
+* `GSI3`: `collector_user_id` (PK), `created_at` (SK) - Collector's refund history
+  * **Use Case:** Collector's refund history page
+* `GSI4`: `status` (PK), `created_at` (SK) - Refunds by status
+  * **Use Case:** Admin refund processing
+
+**TTL:** None
+
+---
+
+## Payment Flow
+
+```
+1. Create Payment (pending)
+   ↓
+2. Authorize Payment (authorized)
+   ↓
+3. Capture Payment (captured)
+   ↓
+4. (Optional) Refund Payment (refunded)
+```
+
+---
+
+## Query Patterns
+
+### Get Payment by ID
+**Table:** `payments`
+**Operation:** GetItem
+**Key:** `id`
+**Use Case:** Payment detail page
+
+### Get Payment for Order
+**Table:** `payments`
+**Operation:** Query on GSI1
+**Key:** `order_id`
+**Use Case:** Order detail page showing payment info
+
+### Get Collector's Payment History
+**Table:** `payments`
+**Operation:** Query on GSI2
+**Key:** `collector_user_id`
+**Use Case:** Collector's payment history page
+
+### Get Payment Methods for User
+**Table:** `payment_methods`
+**Operation:** Query
+**Key:** `user_id`
+**Use Case:** Checkout page, payment methods management
+
+### Get Refunds for Payment
+**Table:** `refunds`
+**Operation:** Query
+**Key:** `payment_id`
+**Use Case:** Payment detail page
+
+---
+
+## Events Consumed
+
+This domain consumes events from other domains:
+
+* `OrderCreated` (from Order Domain)
+  * **Action:** Create payment record with status "pending"
+
+* `OrderCanceled` (from Order Domain)
+  * **Action:** Create refund and mark payment as "refunded" when applicable
+
+---
+
+## Events Published
+
+This domain publishes the following events to EventBridge:
+
+* `PaymentCreated`
+  * `payment_id` (String)
+  * `order_id` (String)
+  * `amount` (Number)
+  * `created_at` (String, ISO 8601)
+
+* `PaymentAuthorized`
+  * `payment_id` (String)
+  * `order_id` (String)
+  * `amount` (Number)
+  * `authorized_at` (String, ISO 8601)
+
+* `PaymentMethodAdded`
+  * `payment_method_id` (String)
+  * `user_id` (String)
+  * `created_at` (String, ISO 8601)
+
+* `PaymentCaptured`
+  * `payment_id` (String)
+  * `order_id` (String)
+  * `amount` (Number)
+  * `captured_at` (String, ISO 8601)
+
+* `PaymentFailed`
+  * `payment_id` (String)
+  * `order_id` (String)
+  * `failure_reason` (String)
+  * `failed_at` (String, ISO 8601)
+
+* `PaymentRefunded`
+  * `payment_id` (String)
+  * `refund_id` (String)
+  * `amount` (Number)
+  * `refunded_at` (String, ISO 8601)
+
+---
+
+## Design Considerations
+
+1. **Payment Publisher:** Uses Stripe (or similar). `payment_intent_id` and `publisher_refund_id` store publisher references.
+
+2. **Amount Storage:** All amounts stored in cents (integer) to avoid floating-point precision issues.
+
+3. **Payment Methods:** Stored securely. Only last4 digits stored (PCI compliance). Full card data stored in Stripe.
+
+4. **Refunds:** Multiple refunds per payment supported (partial refunds). Each refund is a separate record.
+
+5. **State Management:** Payment status follows strict flow. Use conditional updates to prevent invalid transitions.
+
+6. **Security:** Payment methods encrypted at rest. Never log full card numbers.
+
+---
+
+## Access Patterns
+
+### High Frequency
+* Get payment for order (order detail page)
+* Get user's payment methods (checkout page)
+
+### Medium Frequency
+* Create payment (checkout flow)
+* Authorize payment (checkout flow)
+* Capture payment (order processing)
+
+### Low Frequency
+* Get payment history (collector account page)
+* Create refund (refund processing)
+* Get refunds (payment detail page)
+
+---
+
+## Data Consistency
+
+* **Strong Consistency:** Payment reads (for order detail pages)
+* **Idempotency:** Payment operations must be idempotent (use idempotency keys)
+
+---
+
+## Security Considerations
+
+1. **PCI Compliance:** Never store full card numbers. Use Stripe for card storage.
+2. **Encryption:** Encrypt sensitive payment data at rest.
+3. **Access Control:** Only collectors can view their own payment methods.
+4. **Audit Logging:** Log all payment operations for compliance.
+
+---
+
+## Next Steps
+
+1. **Create CDK stack** with DynamoDB tables
+2. **Set up Stripe integration** (or payment publisher)
+3. **Set up EventBridge rules** for consumed/published events
+4. **Create Lambda functions** for:
+   * Payment creation
+   * Payment authorization (Stripe)
+   * Payment capture (Stripe)
+   * Refund processing
+   * Payment method management
+5. **Build API Gateway** endpoints:
+   * `POST /payments`
+   * `GET /payments/{payment_id}`
+   * `POST /payments/{payment_id}/authorize`
+   * `POST /payments/{payment_id}/capture`
+   * `GET /payments/order/{order_id}`
+   * `GET /payment-methods`
+   * `POST /payment-methods`
+   * `DELETE /payment-methods/{payment_method_id}`
+   * `POST /payments/{payment_id}/refunds`
+   * `GET /payments/{payment_id}/refunds`

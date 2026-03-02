@@ -1,0 +1,273 @@
+{
+  "Comment": "Payment Domain State Machine - Handles payment authorization and capture flow",
+  "StartAt": "RoutePaymentAction",
+  "States": {
+    "RoutePaymentAction": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.action",
+          "StringEquals": "authorize",
+          "Next": "AuthorizePayment"
+        },
+        {
+          "Variable": "$.action",
+          "StringEquals": "capture",
+          "Next": "CapturePayment"
+        },
+        {
+          "Variable": "$.action",
+          "StringEquals": "refund",
+          "Next": "ProcessRefund"
+        }
+      ],
+      "Default": "InvalidPaymentAction"
+    },
+    "InvalidPaymentAction": {
+      "Type": "Fail",
+      "Error": "InvalidPaymentAction",
+      "Cause": "Action must be authorize, capture, or refund"
+    },
+    "AuthorizePayment": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:getItem",
+      "Parameters": {
+        "TableName": "${PaymentsTableName}",
+        "Key": {
+          "paymentId": {
+            "S.$": "$.paymentId"
+          }
+        }
+      },
+      "ResultPath": "$.paymentData",
+      "Next": "ValidatePaymentForAuthorization"
+    },
+    "ValidatePaymentForAuthorization": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.paymentData.Item.status.S",
+          "StringEquals": "PENDING",
+          "Next": "UpdatePaymentToAuthorized"
+        }
+      ],
+      "Default": "InvalidPaymentStatusForAuthorization"
+    },
+    "InvalidPaymentStatusForAuthorization": {
+      "Type": "Fail",
+      "Error": "InvalidPaymentStatus",
+      "Cause": "Payment must be in PENDING status to authorize"
+    },
+    "UpdatePaymentToAuthorized": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${PaymentsTableName}",
+        "Key": {
+          "paymentId": {
+            "S.$": "$.paymentId"
+          }
+        },
+        "UpdateExpression": "SET #status = :status, authorizedAt = :authorizedAt, paymentIntentId = :paymentIntentId, updatedAt = :updatedAt",
+        "ExpressionAttributeNames": {
+          "#status": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "AUTHORIZED"
+          },
+          ":authorizedAt": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          ":paymentIntentId": {
+            "S.$": "$.paymentIntentId"
+          },
+          ":updatedAt": {
+            "S.$": "$$.State.EnteredTime"
+          }
+        }
+      },
+      "ResultPath": "$.updateResult",
+      "Next": "AuthorizationSuccess"
+    },
+    "AuthorizationSuccess": {
+      "Type": "Succeed"
+    },
+    "CapturePayment": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:getItem",
+      "Parameters": {
+        "TableName": "${PaymentsTableName}",
+        "Key": {
+          "paymentId": {
+            "S.$": "$.paymentId"
+          }
+        }
+      },
+      "ResultPath": "$.paymentData",
+      "Next": "ValidatePaymentForCapture"
+    },
+    "ValidatePaymentForCapture": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.paymentData.Item.status.S",
+          "StringEquals": "AUTHORIZED",
+          "Next": "CheckAuthorizationExpiry"
+        }
+      ],
+      "Default": "InvalidPaymentStatusForCapture"
+    },
+    "InvalidPaymentStatusForCapture": {
+      "Type": "Fail",
+      "Error": "InvalidPaymentStatus",
+      "Cause": "Payment must be in AUTHORIZED status to capture"
+    },
+    "CheckAuthorizationExpiry": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.paymentData.Item.authorizedAt.S",
+          "IsPresent": true,
+          "Next": "UpdatePaymentToCaptured"
+        }
+      ],
+      "Default": "AuthorizationExpired"
+    },
+    "AuthorizationExpired": {
+      "Type": "Fail",
+      "Error": "AuthorizationExpired",
+      "Cause": "Payment authorization has expired"
+    },
+    "UpdatePaymentToCaptured": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${PaymentsTableName}",
+        "Key": {
+          "paymentId": {
+            "S.$": "$.paymentId"
+          }
+        },
+        "UpdateExpression": "SET #status = :status, capturedAt = :capturedAt, updatedAt = :updatedAt",
+        "ExpressionAttributeNames": {
+          "#status": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "CAPTURED"
+          },
+          ":capturedAt": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          ":updatedAt": {
+            "S.$": "$$.State.EnteredTime"
+          }
+        }
+      },
+      "ResultPath": "$.updateResult",
+      "Next": "CaptureSuccess"
+    },
+    "CaptureSuccess": {
+      "Type": "Succeed"
+    },
+    "ProcessRefund": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:getItem",
+      "Parameters": {
+        "TableName": "${PaymentsTableName}",
+        "Key": {
+          "paymentId": {
+            "S.$": "$.paymentId"
+          }
+        }
+      },
+      "ResultPath": "$.paymentData",
+      "Next": "ValidatePaymentForRefund"
+    },
+    "ValidatePaymentForRefund": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.paymentData.Item.status.S",
+              "StringEquals": "CAPTURED"
+            },
+            {
+              "Variable": "$.refundAmount",
+              "NumericLessThanEqualsPath": "$.paymentData.Item.amount.N"
+            }
+          ],
+          "Next": "CreateRefundRecord"
+        }
+      ],
+      "Default": "InvalidRefundRequest"
+    },
+    "InvalidRefundRequest": {
+      "Type": "Fail",
+      "Error": "InvalidRefundRequest",
+      "Cause": "Payment must be CAPTURED and refund amount cannot exceed payment amount"
+    },
+    "CreateRefundRecord": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "${RefundsTableName}",
+        "Item": {
+          "paymentId": {
+            "S.$": "$.paymentId"
+          },
+          "refundId": {
+            "S.$": "$.refundId"
+          },
+          "amount": {
+            "N.$": "$.refundAmount"
+          },
+          "reason": {
+            "S.$": "$.refundReason"
+          },
+          "status": {
+            "S": "PENDING"
+          },
+          "createdAt": {
+            "S.$": "$$.State.EnteredTime"
+          }
+        }
+      },
+      "ResultPath": "$.refundResult",
+      "Next": "UpdatePaymentToRefunded"
+    },
+    "UpdatePaymentToRefunded": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${PaymentsTableName}",
+        "Key": {
+          "paymentId": {
+            "S.$": "$.paymentId"
+          }
+        },
+        "UpdateExpression": "SET #status = :status, refundedAt = :refundedAt, updatedAt = :updatedAt",
+        "ExpressionAttributeNames": {
+          "#status": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "REFUNDED"
+          },
+          ":refundedAt": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          ":updatedAt": {
+            "S.$": "$$.State.EnteredTime"
+          }
+        }
+      },
+      "Next": "RefundSuccess"
+    },
+    "RefundSuccess": {
+      "Type": "Succeed"
+    }
+  }
+}

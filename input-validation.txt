@@ -1,0 +1,472 @@
+================================================================================
+PAYMENT DOMAIN - INPUT VALIDATION RULES
+================================================================================
+
+This document defines all input validation rules for the Payment Domain REST API.
+All API endpoints must validate inputs according to these rules before processing.
+
+================================================================================
+POST /payments
+================================================================================
+
+Create Payment
+
+Request Body:
+- orderId: String (required)
+- collectorUserId: String (required)
+- amount: Number (required)
+- currency: String (required)
+- paymentMethodId: String (required)
+
+Validation Rules:
+1. orderId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+   - Must reference an existing order
+   - Order must be in PENDING status
+
+2. collectorUserId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+   - Must match authenticated user's ID
+   - Must match the order's collectorUserId
+
+3. amount:
+   - Must be a positive number
+   - Minimum: 0.01
+   - Maximum: 999999.99
+   - Must have at most 2 decimal places
+   - Cannot be negative or zero
+   - Must match order total amount
+
+4. currency:
+   - Must be a valid ISO 4217 currency code (3 letters, uppercase)
+   - Must be one of: USD, EUR, GBP, CAD, AUD (supported currencies)
+   - Case-sensitive
+
+5. paymentMethodId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+   - Must reference an existing payment method
+   - Payment method must belong to collectorUserId
+
+Business Rules:
+- Order must exist and be in PENDING status
+- Payment amount must match order total
+- Payment method must be valid and belong to collector
+- Payment is created in PENDING status
+- Payment authorization is initiated
+
+Error Responses:
+- 400 Bad Request: Invalid input format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Cannot create payment (not collector, order not pending)
+- 404 Not Found: Order, payment method not found
+- 409 Conflict: Payment already exists for order
+- 422 Unprocessable Entity: Validation failed (amount mismatch, etc.)
+
+================================================================================
+POST /payments/{paymentId}/authorize
+================================================================================
+
+Authorize Payment
+
+Path Parameters:
+- paymentId: String (required)
+
+Validation Rules:
+1. paymentId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+   - Must reference an existing payment
+
+Business Rules:
+- Payment must exist
+- Payment must be in PENDING status
+- User must be collector or admin
+- Payment authorization is processed
+- Payment status transitions to AUTHORIZED
+- Funds are held (not captured)
+
+Error Responses:
+- 400 Bad Request: Invalid paymentId format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Cannot authorize payment
+- 404 Not Found: Payment not found
+- 409 Conflict: Payment not in PENDING status
+
+================================================================================
+POST /payments/{paymentId}/capture
+================================================================================
+
+Capture Payment
+
+Path Parameters:
+- paymentId: String (required)
+
+Request Body (optional):
+- amount: Number (optional, for partial capture)
+
+Validation Rules:
+1. paymentId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+   - Must reference an existing payment
+
+2. amount (if provided):
+   - Must be a positive number
+   - Minimum: 0.01
+   - Maximum: payment authorized amount
+   - Must have at most 2 decimal places
+   - Cannot exceed authorized amount
+
+Business Rules:
+- Payment must exist
+- Payment must be in AUTHORIZED status
+- User must be admin or system (collector cannot capture)
+- Payment status transitions to CAPTURED
+- Funds are transferred
+- If amount provided, partial capture is performed
+
+Error Responses:
+- 400 Bad Request: Invalid input format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Cannot capture payment
+- 404 Not Found: Payment not found
+- 409 Conflict: Payment not in AUTHORIZED status or amount exceeds authorized
+
+================================================================================
+POST /payments/{paymentId}/refund
+================================================================================
+
+Create Refund
+
+Path Parameters:
+- paymentId: String (required)
+
+Request Body:
+- amount: Number (optional)
+- reason: String (optional)
+
+Validation Rules:
+1. paymentId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+   - Must reference an existing payment
+
+2. amount (if provided):
+   - Must be a positive number
+   - Minimum: 0.01
+   - Maximum: payment captured amount
+   - Must have at most 2 decimal places
+   - Cannot exceed captured amount
+
+3. reason (if provided):
+   - Maximum length: 500 characters
+   - Cannot be all whitespace
+   - Trim leading/trailing whitespace
+
+Business Rules:
+- Payment must exist
+- Payment must be in CAPTURED status
+- User must be admin or collector (for their own payments)
+- Refund amount defaults to full captured amount if not provided
+- Refund is created in PENDING status
+- Refund processing is initiated
+
+Error Responses:
+- 400 Bad Request: Invalid input format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Cannot create refund
+- 404 Not Found: Payment not found
+- 409 Conflict: Payment not in CAPTURED status or refund already exists
+
+================================================================================
+GET /payments/{paymentId}
+================================================================================
+
+Get Payment
+
+Path Parameters:
+- paymentId: String (required)
+
+Validation Rules:
+1. paymentId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+
+Business Rules:
+- Payment must exist
+- User must be payment collector, admin, or order maker
+
+Error Responses:
+- 400 Bad Request: Invalid paymentId format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Cannot access payment
+- 404 Not Found: Payment not found
+
+================================================================================
+GET /payments
+================================================================================
+
+List Payments
+
+Query Parameters:
+- collectorUserId: String (optional)
+- orderId: String (optional)
+- status: String (optional)
+- limit: Number (optional, default: 20, max: 100)
+- nextToken: String (optional)
+
+Validation Rules:
+1. collectorUserId (if provided):
+   - Must be a valid UUID or ID format
+   - Must match authenticated user's ID (unless admin)
+
+2. orderId (if provided):
+   - Must be a valid UUID or ID format
+
+3. status (if provided):
+   - Must be one of: PENDING, AUTHORIZED, CAPTURED, FAILED, REFUNDED
+   - Case-sensitive
+
+4. limit:
+   - Must be between 1 and 100
+   - Default: 20 if not provided
+   - Must be a positive integer
+
+5. nextToken:
+   - Must be a valid pagination token if provided
+
+Business Rules:
+- At least one filter (collectorUserId, orderId, status) must be provided
+- User can only filter by their own collectorUserId (unless admin)
+- Results filtered by provided criteria
+
+Error Responses:
+- 400 Bad Request: Invalid input format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Cannot access other user's payments
+
+================================================================================
+POST /payment-methods
+================================================================================
+
+Add Payment Method
+
+Request Body:
+- collectorUserId: String (required)
+- type: String (required)
+- token: String (required)
+- metadata: Object (optional)
+
+Validation Rules:
+1. collectorUserId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+   - Must match authenticated user's ID
+
+2. type:
+   - Must be one of: "card", "paypal", "bank_account"
+   - Case-sensitive
+
+3. token:
+   - Must be a valid payment token from payment publisher
+   - Cannot be null or empty
+   - Maximum length: 500 characters
+   - Token is validated with payment publisher
+
+4. metadata (if provided):
+   - Must be a valid JSON object
+   - Can contain: lastFour, brand, expiryMonth, expiryYear (for cards)
+   - Maximum size: 1KB
+
+Business Rules:
+- Payment method is tokenized and stored securely
+- Payment method is associated with collectorUserId
+- Payment method is set as default if first method
+- Maximum 10 payment methods per user
+
+Error Responses:
+- 400 Bad Request: Invalid input format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Cannot add payment method for other user
+- 422 Unprocessable Entity: Validation failed (invalid token, etc.)
+- 429 Too Many Requests: Maximum payment methods limit reached
+
+================================================================================
+GET /payment-methods
+================================================================================
+
+List Payment Methods
+
+Query Parameters:
+- collectorUserId: String (required)
+- limit: Number (optional, default: 20, max: 100)
+- nextToken: String (optional)
+
+Validation Rules:
+1. collectorUserId:
+   - Must be a valid UUID or ID format
+   - Cannot be null or empty
+   - Must match authenticated user's ID (unless admin)
+
+2. limit:
+   - Must be between 1 and 100
+   - Default: 20 if not provided
+
+3. nextToken:
+   - Must be a valid pagination token if provided
+
+Business Rules:
+- User can only list their own payment methods (unless admin)
+- Sensitive data (full card numbers, tokens) are not returned
+- Only metadata (lastFour, brand, expiry) is returned
+
+Error Responses:
+- 400 Bad Request: Invalid input format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Cannot access other user's payment methods
+
+================================================================================
+POST /payments/webhook
+================================================================================
+
+Payment Webhook
+
+Request Headers:
+- X-Webhook-Signature: String (required)
+- X-Webhook-Timestamp: String (required)
+
+Request Body:
+- event: String (required)
+- data: Object (required)
+
+Validation Rules:
+1. X-Webhook-Signature:
+   - Must be present
+   - Must be valid webhook signature
+   - Signature is validated against webhook secret
+
+2. X-Webhook-Timestamp:
+   - Must be present
+   - Must be valid Unix timestamp
+   - Request must be within 5 minutes of timestamp (prevent replay attacks)
+
+3. event:
+   - Must be a valid webhook event type
+   - Must be one of: payment.authorized, payment.captured, payment.failed, payment.refunded
+   - Case-sensitive
+
+4. data:
+   - Must be a valid JSON object
+   - Must contain paymentId
+   - Must contain payment status
+   - Must contain transaction details
+
+Business Rules:
+- Webhook signature is validated
+- Webhook timestamp is validated (prevent replay)
+- Payment status is updated from webhook
+- Payment events are published
+- Webhook is idempotent (handle duplicate webhooks)
+
+Error Responses:
+- 400 Bad Request: Invalid webhook format
+- 401 Unauthorized: Invalid webhook signature
+- 400 Bad Request: Webhook timestamp expired
+- 404 Not Found: Payment not found
+
+================================================================================
+COMMON VALIDATION PATTERNS
+================================================================================
+
+1. Amount Validation:
+   - All amounts must be positive numbers
+   - Maximum 2 decimal places
+   - Range: 0.01 to 999999.99
+   - Currency-specific validation
+
+2. Currency Validation:
+   - Must be ISO 4217 currency code
+   - Must be supported currency
+   - Case-sensitive (uppercase)
+
+3. Payment Status Transitions:
+   - PENDING → AUTHORIZED (via authorize)
+   - AUTHORIZED → CAPTURED (via capture)
+   - AUTHORIZED → FAILED (via payment publisher)
+   - CAPTURED → REFUNDED (via refund)
+   - Any → FAILED (via payment publisher error)
+
+4. Authentication & Authorization:
+   - All endpoints require valid authentication token
+   - Users can only access their own payments
+   - Admins can access all payments
+   - Webhook endpoint uses signature authentication
+
+5. Rate Limiting:
+   - Create payment: 10 per hour per user
+   - Authorize payment: 20 per hour per user
+   - Capture payment: 50 per hour per admin
+   - Create refund: 5 per hour per user
+   - Add payment method: 5 per hour per user
+
+================================================================================
+SECURITY CONSIDERATIONS
+================================================================================
+
+1. Payment Data Security:
+   - Never store full card numbers
+   - Tokenize payment methods
+   - Encrypt sensitive payment data
+   - Use PCI-compliant storage
+
+2. Webhook Security:
+   - Validate webhook signatures
+   - Check webhook timestamps
+   - Prevent replay attacks
+   - Log all webhook events
+
+3. Amount Validation:
+   - Verify amounts match orders
+   - Prevent amount manipulation
+   - Validate currency consistency
+   - Check for duplicate payments
+
+================================================================================
+CROSS-DOMAIN VALIDATION
+================================================================================
+
+1. Order Validation:
+   - Validate orderId exists
+   - Verify order is in PENDING status
+   - Check order total matches payment amount
+   - Verify order collector matches payment collector
+
+2. Payment Method Validation:
+   - Validate payment method exists
+   - Verify payment method belongs to collector
+   - Check payment method is active
+   - Validate payment method with publisher
+
+================================================================================
+ERROR RESPONSE FORMAT
+================================================================================
+
+All validation errors should return structured error responses:
+
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": {
+      "field": "amount",
+      "reason": "Amount must match order total"
+    }
+  }
+}
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

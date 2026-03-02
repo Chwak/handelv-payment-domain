@@ -1,0 +1,235 @@
+# Payment Domain - Business Logic
+
+## Domain Purpose
+The Payment Domain manages money movement from collector to platform (charges, holds, escrow, refunds). This domain handles all collector payment operations.
+
+## Data Layer Ownership
+The Payment Domain owns and manages the following DynamoDB tables:
+- payments: Payment records and status
+- payment_methods: Stored payment methods for users
+- refunds: Refund records
+
+## Business Rules
+
+### 1. Payment Creation
+- Payments are created when an order is placed
+- Payments start in "pending" status
+- Payment amount must match order total
+- Payment must reference valid order_id
+- Payment method must be on file or provided
+
+### 2. Payment Lifecycle
+- Status flow: pending -> authorized -> captured -> (refunded if needed)
+- Authorization holds funds but doesn't transfer
+- Capture transfers funds to platform
+- Failed payments cannot proceed
+- Refunded payments are final
+
+### 3. Payment Methods
+- Users can store multiple payment methods
+- Payment methods are encrypted and tokenized
+- Default payment method is used if not specified
+- Payment methods are validated before use
+- Expired payment methods cannot be used
+
+### 4. Authorization and Capture
+- Authorization must happen before order fulfillment
+- Authorization holds funds for a limited time
+- Capture happens when order is confirmed
+- Authorization can expire if not captured
+- Failed captures trigger order cancellation
+
+### 5. Refund Management
+- Refunds can be full or partial
+- Refunds require reason (optional but recommended)
+- Refund status: pending -> completed -> failed
+- Refunds are processed through payment publisher
+- Refunded amounts are tracked separately
+
+### 6. Payment Publisher Integration
+- Payment_intent_id links to external publisher (Stripe, etc.)
+- Publisher responses update payment status
+- Webhooks from publisher update payment state
+- Failed publisher calls are retried with exponential backoff
+
+## Data Layer Interactions
+
+### Read Operations
+- Read payment by id
+- Read payment by order_id
+- Read payments by collector_user_id
+- Read payments by status
+- Read payment methods by user_id
+- Read refunds by payment_id
+
+### Write Operations
+- Create payment
+- Update payment status
+- Authorize payment
+- Capture payment
+- Create refund
+- Add/update/remove payment methods
+- Update refund status
+
+### Data Integrity Rules
+- Payments must reference valid order_id from Order Domain
+- Payments must reference valid collector_user_id from Identity Domain
+- Payment amount must match order total
+- Payment methods must reference valid user_id
+- Refunds must reference valid payment_id
+- Refund amount cannot exceed payment amount
+- Payment status transitions must be valid
+
+## Event-Driven Communication
+
+### Events Published
+- PaymentCreated: When a payment is initiated
+- PaymentAuthorized: When payment is authorized
+- PaymentCaptured: When payment is captured
+- PaymentFailed: When payment fails
+- PaymentRefunded: When refund is initiated
+- RefundCompleted: When refund is processed
+- PaymentMethodAdded: When a payment method is saved
+
+### Events Consumed
+- OrderCreated: From Order Domain - triggers payment creation
+- OrderCanceled: From Order Domain - may trigger refund
+- OrderCompleted: From Order Domain - confirms payment capture
+
+## Cross-Domain Boundaries
+
+### What This Domain Owns
+- Payment records and status
+- Payment methods
+- Refund records
+- Payment publisher integration
+
+### What This Domain Does NOT Own
+- Order lifecycle (Order Domain)
+- Payouts to makers (Payout Domain)
+- Collector profiles (Collector Domain)
+- User authentication (Identity Domain)
+
+## Business Logic Constraints
+1. Payments cannot be created without valid order
+2. Payment amount must match order total exactly
+3. Authorization must happen before capture
+4. Refunds cannot exceed payment amount
+5. Expired payment methods cannot be used
+6. Failed payments cannot be retried indefinitely
+7. Payment status can only move forward (except refunds)
+8. Payment publisher errors must be handled gracefully
+
+## Domain Structure & Implementation
+
+### Directory Structure
+The Payment Domain follows a structure similar to `/Users/jred/AWS/aedcor-backend/support_backend/lib`:
+
+```
+lib/
+├── constructs/
+│   ├── dynamodb/
+│   │   └── payment-tables/
+│   │       └── payment-tables-construct.ts
+│   ├── lambda/
+│   │   └── payment/
+│   │       ├── create-payment/
+│   │       ├── authorize-payment/
+│   │       ├── capture-payment/
+│   │       ├── create-refund/
+│   │       ├── get-payment/
+│   │       ├── list-payment-methods/
+│   │       ├── add-payment-method/
+│   │       ├── payment-webhook/
+│   │       └── event-consumer/
+│   └── appsync/
+│       └── payment-appsync/
+│           └── payment-appsync-construct.ts
+├── functions/
+│   ├── lambda/
+│   │   └── payment/
+│   │       ├── create-payment/
+│   │       │   └── create-payment-lambda.js
+│   │       ├── authorize-payment/
+│   │       │   └── authorize-payment-lambda.js
+│   │       ├── capture-payment/
+│   │       │   └── capture-payment-lambda.js
+│   │       ├── create-refund/
+│   │       │   └── create-refund-lambda.js
+│   │       ├── get-payment/
+│   │       │   └── get-payment-lambda.js
+│   │       ├── list-payment-methods/
+│   │       │   └── list-payment-methods-lambda.js
+│   │       ├── add-payment-method/
+│   │       │   └── add-payment-method-lambda.js
+│   │       ├── payment-webhook/
+│   │       │   └── payment-webhook-lambda.js
+│   │       └── event-consumer/
+│   │           └── event-consumer-lambda.js
+│   └── appsync-resolvers/
+│       └── payment/
+│           ├── create-payment-resolver.js
+│           ├── get-payment-resolver.js
+│           └── list-payment-methods-resolver.js
+└── utils/
+    ├── response-utils.ts
+    ├── validation-utils.ts
+    ├── payment-publisher-client.ts
+    └── event-publisher.ts
+```
+
+### Data Layer Interaction Patterns
+
+#### Direct Data Access
+- **Payments**: Direct DynamoDB access via `payments` table using `payment_id` as partition key
+- **Payment Methods**: Direct DynamoDB access via `payment_methods` table using `user_id` (PK) and `payment_method_id` (SK)
+- **Refunds**: Direct DynamoDB access via `refunds` table using `payment_id` (PK) and `refund_id` (SK)
+
+#### Query Patterns
+- **Get payment**: Single item read by `payment_id`
+- **Get payment by order**: GSI query by `order_id`
+- **List payments by collector**: GSI query by `collector_user_id`
+- **List payments by status**: GSI query by `status`
+- **List payment methods**: Query by `user_id`
+- **List refunds**: Query by `payment_id`
+
+#### Write Patterns
+- **Create payment**: PutItem with order validation and amount matching
+- **Authorize payment**: UpdateItem with status transition and publisher call
+- **Capture payment**: UpdateItem with status transition and publisher call
+- **Create refund**: PutItem with amount validation and publisher call
+- **Add payment method**: PutItem with encryption and tokenization
+
+### Business Logic Implementation
+
+#### Payment Publisher Integration
+- All payment operations interact with external publisher (Stripe, etc.) via `payment-publisher-client.ts`
+- Publisher responses update payment status in DynamoDB
+- Webhook handler processes async publisher events
+- Retry logic with exponential backoff for failed publisher calls
+
+#### Validation Layer
+- Payment creation validates order exists and amount matches (via Order Domain)
+- Payment authorization validates payment method is valid and not expired
+- Payment capture validates authorization exists and hasn't expired
+- Refund creation validates payment amount and refund limits
+
+#### Event Handling
+- **Event Consumer Lambda**: Processes events from other domains
+  - `OrderCreated` → Creates payment record
+  - `OrderCanceled` → Triggers refund process
+  - `OrderCompleted` → Confirms payment capture
+
+#### Data Consistency
+- Payment status updates use conditional writes for idempotency
+- Refund amounts tracked separately with atomic balance updates
+- Payment method encryption handled before storage
+- Publisher webhooks update payment state asynchronously
+
+#### Error Handling
+- Invalid order → Return 400 Bad Request
+- Amount mismatch → Return 400 Bad Request
+- Invalid payment method → Return 400 Bad Request
+- Publisher errors → Return 502 Bad Gateway with retry logic
+- Payment not found → Return 404 Not Found
+- Unauthorized access → Return 403 Forbidden

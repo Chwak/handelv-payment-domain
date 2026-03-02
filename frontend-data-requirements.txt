@@ -1,0 +1,68 @@
+# Payment Domain - Frontend Data Requirements
+
+## Overview
+All data that the Payment Domain captures from frontend interactions.
+
+**Domain:** Payment Domain
+**Purpose:** Payment processing from collector to platform
+**Last Updated:** 2026-01-31
+
+---
+
+## 1. PAYMENT METHODS
+
+### 1.1 Add Payment Method
+**Endpoint**: `POST /payment-methods`
+
+```typescript
+{
+  type: 'card',
+  stripePaymentMethodId: string,       // From Stripe.js
+  isDefault: boolean,
+}
+```
+
+### 1.2 Delete Payment Method
+**Endpoint**: `DELETE /payment-methods/{paymentMethodId}`
+
+---
+
+## 2. PAYMENT PROCESSING
+
+### 2.1 Create Payment Intent
+**Endpoint**: `POST /payments/intent`
+
+```typescript
+{
+  orderId: string,
+  amount: number,
+  paymentMethodId: string,
+}
+```
+
+**Response**: Client secret for Stripe confirmation
+
+### 2.2 Confirm Payment
+**Endpoint**: `POST /payments/{paymentId}/confirm`
+
+```typescript
+{
+  paymentIntentId: string,              // Stripe PaymentIntent ID
+}
+```
+
+**Events Emitted**: `PaymentCaptured`
+
+---
+
+## API Endpoints
+
+- `POST /payment-methods` - Add payment method
+- `GET /payment-methods` - List payment methods
+- `DELETE /payment-methods/{id}` - Delete payment method
+- `POST /payments/intent` - Create payment intent
+- `POST /payments/{id}/confirm` - Confirm payment
+
+---
+
+**Note:** See `inter-domain-data-requirements.txt` for events.

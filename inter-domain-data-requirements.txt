@@ -1,0 +1,103 @@
+# Payment Domain - Inter-Domain Data Requirements
+
+## Overview
+All data consumed from and provided to other domains.
+
+**Domain:** Payment Domain  
+**Last Updated:** 2026-01-31
+
+---
+
+## 1. EVENTS CONSUMED
+
+### 1.1 From Order Domain
+**Event**: `OrderCreated`
+
+```typescript
+{
+  event: "OrderCreated",
+  orderId: string,
+  collectorUserId: string,
+  totalPrice: number,
+}
+```
+
+**Action**: Create payment record with status 'pending'
+
+---
+
+## 2. EVENTS EMITTED
+
+### 2.1 `PaymentAuthorized`
+**Consumers**: Order
+
+```typescript
+{
+  event: "PaymentAuthorized",
+  paymentId: string,
+  orderId: string,
+  amount: number,
+  authorizedAt: string,
+}
+```
+
+### 2.2 `PaymentCaptured`
+**Consumers**: Order, Notification
+
+```typescript
+{
+  event: "PaymentCaptured",
+  paymentId: string,
+  orderId: string,
+  amount: number,
+  capturedAt: string,
+}
+```
+
+### 2.3 `PaymentFailed`
+**Consumers**: Order, Notification
+
+```typescript
+{
+  event: "PaymentFailed",
+  paymentId: string,
+  orderId: string,
+  failureReason: string,
+  failedAt: string,
+}
+```
+
+### 2.4 `PaymentRefunded`
+**Consumers**: Payout, Notification
+
+```typescript
+{
+  event: "PaymentRefunded",
+  paymentId: string,
+  refundId: string,
+  amount: number,
+  refundedAt: string,
+}
+```
+
+---
+
+## DEPENDENCY MAP
+
+```
+Payment Domain:
+├── Consumes From:
+│   └── Order Domain
+│       └── OrderCreated
+└── Provides To:
+    ├── Order Domain
+    │   ├── PaymentAuthorized
+    │   ├── PaymentCaptured
+    │   └── PaymentFailed
+    ├── Payout Domain
+    │   └── PaymentRefunded
+    └── Notification Domain
+        ├── PaymentCaptured
+        ├── PaymentFailed
+        └── PaymentRefunded
+```

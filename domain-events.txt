@@ -1,0 +1,102 @@
+================================================================================
+PAYMENT DOMAIN - EVENT CATALOG
+================================================================================
+Domain: payment-domain
+Event Source: hand-made.payment-domain
+Last Updated: 2026-02-16
+
+================================================================================
+PRODUCED EVENTS
+================================================================================
+
+Event: payment.initiated.v1
+Status: 🔲 PLANNED
+--------------------------------------------------------------------------------
+Description:
+  Published when payment process is initiated.
+
+Trigger: TBD
+Republish Lambda: TBD
+Payload Schema: TBD
+Consumers: order-domain, notification-domain
+
+--------------------------------------------------------------------------------
+
+Event: payment.authorized.v1
+Status: 🔲 PLANNED
+--------------------------------------------------------------------------------
+Description:
+  Published when payment authorization is successful (funds held).
+
+Trigger: TBD
+Republish Lambda: TBD
+Payload Schema: TBD
+Consumers: order-domain, notification-domain
+
+--------------------------------------------------------------------------------
+
+Event: payment.captured.v1
+Status: 🔲 PLANNED
+--------------------------------------------------------------------------------
+Description:
+  Published when payment is captured/charged.
+
+Trigger: TBD
+Republish Lambda: TBD
+Payload Schema: TBD
+Consumers: order-domain, payout-domain, notification-domain
+
+--------------------------------------------------------------------------------
+
+Event: payment.refunded.v1
+Status: 🔲 PLANNED
+--------------------------------------------------------------------------------
+Description:
+  Published when refund is processed successfully.
+
+Trigger: TBD
+Republish Lambda: TBD
+Payload Schema: TBD
+Consumers: order-domain, notification-domain
+
+--------------------------------------------------------------------------------
+
+Event: payment.failed.v1
+Status: 🔲 PLANNED
+--------------------------------------------------------------------------------
+Description:
+  Published when payment processing fails.
+
+Trigger: TBD
+Republish Lambda: TBD
+Payload Schema: TBD
+Consumers: order-domain, notification-domain
+
+================================================================================
+CONSUMED EVENTS
+================================================================================
+
+Event: order.created.v1
+Source: hand-made.order-domain
+Status: ✅ IMPLEMENTED & ACTIVE
+--------------------------------------------------------------------------------
+Handler Lambda: order-created-consumer-lambda
+Action: Initiate payment authorization flow
+Handler Location: lib/functions/lambda/event-consumer/order-created-consumer-lambda.ts
+EventBridge Rule: Order created events routed to OrderCreatedConsumerQueue
+Details:
+  - Receives order.created.v1 from Order Domain
+  - Creates payment record in DynamoDB
+  - Auto-authorizes and captures payment (MVP)
+  - Publishes: payment.initiated.v1 and payment.captured.v1
+
+--------------------------------------------------------------------------------
+
+Event: order.cancelled.v1
+Source: hand-made.order-domain
+Status: 🔲 PLANNED
+--------------------------------------------------------------------------------
+Handler Lambda: TBD
+Action: Release authorized funds or process refund
+
+================================================================================

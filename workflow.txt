@@ -1,0 +1,220 @@
+================================================================================
+PAYMENT DOMAIN - WORKFLOW DOCUMENTATION
+================================================================================
+
+1. WORKFLOW
+================================================================================
+
+The Payment Domain manages money movement from collectors to the platform (charges, holds, escrow, refunds).
+
+Main Workflows:
+
+1. Payment Creation
+   - Create payment for order
+   - Payment associated with order and collector
+   - Payment amount and currency
+
+2. Payment Authorization
+   - Authorize payment (hold funds)
+   - Payment status: AUTHORIZED
+   - Funds held but not captured
+
+3. Payment Capture
+   - Capture authorized payment
+   - Payment status: CAPTURED
+   - Funds transferred to platform
+
+4. Payment Refund
+   - Create refund for payment
+   - Refund amount (full or partial)
+   - Refund status tracking
+
+5. Payment Method Management
+   - Add payment method for collector
+   - List payment methods
+   - Payment methods stored securely
+
+6. Payment Webhook Handling
+   - Handle webhooks from payment publisher
+   - Update payment status from webhook events
+   - Handle payment failures
+
+================================================================================
+2. OPERATIONS TYPE
+================================================================================
+
+Operation Types:
+- Payment Operations: Create payment, authorize payment, capture payment
+- Refund Operations: Create refund
+- Payment Method Operations: Add payment method, list payment methods
+- Webhook Operations: Handle payment webhooks
+
+API Type: REST API (API Gateway)
+
+================================================================================
+3. OUTPUT OF EACH OPERATION (NO CODE, JUST DESCRIPTION)
+================================================================================
+
+3.1 Create Payment Operation
+   Input: Order ID, collector user ID, amount, currency, payment method ID
+   Process:
+     - Validates order exists and is in PENDING status
+     - Validates payment method belongs to collector
+     - Creates payment record in payments table
+     - Sets status to PENDING
+     - Triggers state machine for payment workflow
+   Output:
+     - Success: Payment object with payment_id, order_id, collector_user_id, amount, currency, status (PENDING), created_at
+     - Error: Order not found, invalid payment method, validation errors
+
+3.2 Authorize Payment Operation
+   Input: Payment ID
+   Process:
+     - Validates payment is in PENDING status
+     - Calls payment publisher to authorize payment
+     - Holds funds (does not capture)
+     - Updates payment status to AUTHORIZED
+     - Sets authorized_at timestamp
+     - Triggers state machine
+   Output:
+     - Success: Updated payment object with status (AUTHORIZED), authorized_at, authorization_id
+     - Error: Payment not found, payment already authorized, authorization failure
+
+3.3 Capture Payment Operation
+   Input: Payment ID
+   Process:
+     - Validates payment is in AUTHORIZED status
+     - Calls payment publisher to capture payment
+     - Transfers funds to platform
+     - Updates payment status to CAPTURED
+     - Sets captured_at timestamp
+     - Triggers state machine
+   Output:
+     - Success: Updated payment object with status (CAPTURED), captured_at, transaction_id
+     - Error: Payment not found, payment not authorized, capture failure
+
+3.4 Create Refund Operation
+   Input: Payment ID, refund amount, refund reason
+   Process:
+     - Validates payment is in CAPTURED status
+     - Validates refund amount doesn't exceed payment amount
+     - Creates refund record in refunds table
+     - Calls payment publisher to process refund
+     - Updates refund status
+     - Sets refunded_at timestamp
+     - Triggers state machine
+   Output:
+     - Success: Refund object with refund_id, payment_id, amount, reason, status, refunded_at
+     - Error: Payment not found, invalid refund amount, refund failure
+
+3.5 Get Payment Operation
+   Input: Payment ID, user ID (for authorization)
+   Process:
+     - Retrieves payment from payments table
+     - Validates user is collector or has admin access
+   Output:
+     - Success: Payment object with payment_id, order_id, collector_user_id, amount, currency, status, payment_method, timestamps
+     - Error: Payment not found (404), unauthorized access (403)
+
+3.6 Add Payment Method Operation
+   Input: Collector user ID, payment method type, payment method details (tokenized)
+   Process:
+     - Validates payment method data
+     - Stores payment method securely (tokenized, not raw card numbers)
+     - Creates record in payment_methods table
+   Output:
+     - Success: Payment method object with payment_method_id, collector_user_id, type, last_four, expiry_month, expiry_year, created_at
+     - Error: Validation errors, invalid payment method data
+
+3.7 List Payment Methods Operation
+   Input: Collector user ID
+   Process:
+     - Queries payment_methods table by collector_user_id
+     - Returns list of payment methods (masked data)
+   Output:
+     - Success: List of payment methods with payment_method_id, type, last_four, expiry_month, expiry_year
+     - Error: Unauthorized access
+
+3.8 Payment Webhook Operation
+   Input: Webhook payload from payment publisher
+   Process:
+     - Validates webhook signature
+     - Parses webhook event (payment authorized, captured, failed, refunded)
+     - Updates payment status in database
+     - Triggers appropriate events
+   Output:
+     - Success: Webhook processed confirmation
+     - Error: Invalid webhook signature, unknown event type
+
+================================================================================
+4. GENERATED EVENTS - WHO, HOW TO BE COMMUNICATED WITH WHICH OTHER DOMAIN
+================================================================================
+
+Events Published:
+- PaymentCreated: Published when payment is created
+  - Who: Payment Domain
+  - How: EventBridge event bus
+  - Communicated with: Order Domain, Notification Domain
+  - Purpose: Notify order domain of payment creation, send payment initiated notification
+  - Event Data: payment_id, order_id, collector_user_id, amount, currency, created_at
+
+- PaymentAuthorized: Published when payment is authorized
+  - Who: Payment Domain
+  - How: EventBridge event bus
+  - Communicated with: Order Domain, Notification Domain
+  - Purpose: Move order to paid status, notify collector of authorization
+  - Event Data: payment_id, order_id, collector_user_id, amount, authorized_at
+
+- PaymentCaptured: Published when payment is captured
+  - Who: Payment Domain
+  - How: EventBridge event bus
+  - Communicated with: Order Domain, Payout Domain, Notification Domain
+  - Purpose: Confirm payment completion, start earnings accrual, notify collector
+  - Event Data: payment_id, order_id, collector_user_id, amount, captured_at, transaction_id
+
+- PaymentFailed: Published when payment fails
+  - Who: Payment Domain
+  - How: EventBridge event bus
+  - Communicated with: Order Domain, Notification Domain
+  - Purpose: Update order status, notify collector of failure
+  - Event Data: payment_id, order_id, collector_user_id, failure_reason, failed_at
+
+- PaymentRefunded: Published when payment is refunded
+  - Who: Payment Domain
+  - How: EventBridge event bus
+  - Communicated with: Order Domain, Payout Domain, Notification Domain
+  - Purpose: Update order status, reverse earnings, notify collector and maker
+  - Event Data: payment_id, order_id, collector_user_id, refund_amount, refund_reason, refunded_at
+
+- PaymentMethodAdded: Published when payment method is added
+  - Who: Payment Domain
+  - How: EventBridge event bus
+  - Communicated with: Notification Domain (optional)
+  - Purpose: Send confirmation notification
+  - Event Data: payment_method_id, collector_user_id, type, added_at
+
+Events Consumed:
+- OrderCreated: From Order Domain
+  - Purpose: Create payment when order is created
+  - Action: Create payment record for order, initiate authorization
+
+- OrderCanceled: From Order Domain
+  - Purpose: Process refund when order is canceled
+  - Action: Create refund for payment if payment was captured
+
+Cross-Domain Communication:
+- Order Domain: Publishes OrderCreated, OrderCanceled events that payment domain consumes; receives PaymentAuthorized, PaymentCaptured, PaymentFailed, PaymentRefunded events to update order status
+- Payout Domain: Receives PaymentCaptured, PaymentRefunded events to calculate and adjust earnings
+- Notification Domain: Receives PaymentCreated, PaymentAuthorized, PaymentCaptured, PaymentFailed, PaymentRefunded, PaymentMethodAdded events to send notifications
+
+Communication Method:
+- EventBridge: Primary method for asynchronous event communication
+- REST API (API Gateway): Direct API calls from frontend and other domains
+- Step Functions: State machine for payment workflow
+- Payment Publisher Webhooks: External webhooks from payment publisher (Stripe, PayPal, etc.)
+- DynamoDB: Payment, refund, and payment method data stored in domain tables
+- SSM Parameters: No exports (read-only domain)
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

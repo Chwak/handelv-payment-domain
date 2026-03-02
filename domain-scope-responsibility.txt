@@ -1,0 +1,215 @@
+================================================================================
+PAYMENT DOMAIN - SCOPE & RESPONSIBILITY
+================================================================================
+
+DOMAIN PURPOSE
+================================================================================
+
+The Payment Domain manages money movement from collectors to the platform (charges, holds, escrow, refunds). This domain handles all payment processing, payment method management, and payment webhook handling.
+
+================================================================================
+WHAT THIS DOMAIN OWNS
+================================================================================
+
+1. Payments
+   - Payment records (order, collector, amount, currency)
+   - Payment status (PENDING, AUTHORIZED, CAPTURED, FAILED)
+   - Payment timestamps (created_at, authorized_at, captured_at)
+   - Payment transaction IDs
+
+2. Refunds
+   - Refund records
+   - Refund amounts and reasons
+   - Refund status
+   - Refund timestamps
+
+3. Payment Methods
+   - Payment method records (tokenized)
+   - Payment method metadata (type, last_four, expiry)
+   - Payment method associations with collectors
+
+4. Payment State Machine
+   - Payment status transitions
+   - State machine rules
+   - Status validation
+
+================================================================================
+WHAT THIS DOMAIN IS RESPONSIBLE FOR
+================================================================================
+
+1. Payment Processing
+   - Creating payments for orders
+   - Authorizing payments (holding funds)
+   - Capturing payments (transferring funds)
+   - Handling payment failures
+
+2. Refund Processing
+   - Creating refunds
+   - Processing refunds
+   - Handling refund failures
+   - Tracking refund status
+
+3. Payment Method Management
+   - Adding payment methods
+   - Storing payment methods securely (tokenized)
+   - Product payment methods
+   - Managing payment method associations
+
+4. Payment Webhook Handling
+   - Processing payment publisher webhooks
+   - Validating webhook signatures
+   - Updating payment status from webhooks
+   - Handling webhook events
+
+5. Payment Integration
+   - Integrating with payment publishers (Stripe, PayPal, etc.)
+   - Handling payment publisher responses
+   - Managing payment publisher errors
+   - Supporting multiple payment methods
+
+6. Event Publishing
+   - Publishing PaymentCreated events
+   - Publishing PaymentAuthorized events
+   - Publishing PaymentCaptured events
+   - Publishing PaymentFailed events
+   - Publishing PaymentRefunded events
+   - Publishing PaymentMethodAdded events
+
+================================================================================
+WHAT THIS DOMAIN DOES NOT OWN
+================================================================================
+
+1. Orders
+   - Order creation (Order Domain)
+   - Order management (Order Domain)
+   - Order status (Order Domain)
+
+2. Payouts
+   - Earnings calculation (Payout Domain)
+   - Payout processing (Payout Domain)
+   - Maker balances (Payout Domain)
+
+3. Collector Profiles
+   - Collector profile data (Collector Domain)
+   - Collector preferences (Collector Domain)
+
+4. Notifications
+   - Notification delivery (Notification Domain)
+   - Notification preferences (Notification Domain)
+
+5. Payment Publisher Infrastructure
+   - Payment publisher accounts (external)
+   - Payment publisher APIs (external)
+   - Payment publisher webhooks (external)
+
+================================================================================
+DOMAIN BOUNDARIES
+================================================================================
+
+1. Input Boundaries
+   - Receives payment creation requests
+   - Receives payment authorization requests
+   - Receives payment capture requests
+   - Receives refund creation requests
+   - Receives payment method management requests
+   - Receives payment publisher webhooks
+   - Consumes OrderCreated, OrderCanceled events (to create/refund payments)
+   - Does NOT receive order data directly
+
+2. Output Boundaries
+   - Provides payment data
+   - Provides refund data
+   - Provides payment method data
+   - Publishes payment events
+   - Does NOT provide order data
+   - Does NOT provide collector profile data
+
+3. Data Boundaries
+   - Owns:
+      - `payments` table (payment records and state)
+      - `refunds` table (refund lifecycle records)
+      - `payment_methods` table (tokenized payment methods metadata)
+   - Does NOT own:
+      - Order data or order lifecycle (Order Domain)
+      - Maker balances or payout calculations (Payout Domain)
+      - Collector profile data (Collector Domain)
+   - Integration Notes:
+      - Consumes `OrderCreated`/`OrderCanceled` events to create or refund payments and publishes `Payment*` lifecycle events for downstream consumers.
+      - Integrates with external payment publishers; payment publisher transaction logs remain authoritative for publisher-level auditing.
+
+4. Integration Boundaries
+   - Consumes `OrderCreated` / `OrderCanceled` events to create or refund payments
+   - Publishes payment lifecycle events for Order, Payout, Notification domains
+   - Integrates with external payment publishers (Stripe, PayPal) but does not manage their accounts
+   - Does NOT write to other domains' databases
+
+================================================================================
+KEY RESPONSIBILITIES
+================================================================================
+
+1. Process Payments
+   - Authorize payments securely
+   - Capture payments reliably
+   - Handle payment failures gracefully
+   - Support multiple payment methods
+
+2. Process Refunds
+   - Create refunds accurately
+   - Process refunds reliably
+   - Handle refund failures
+   - Track refund status
+
+3. Manage Payment Methods
+   - Store payment methods securely
+   - Tokenize sensitive data
+   - Support multiple payment types
+   - Enable payment method management
+
+4. Ensure Payment Security
+   - Validate payment data
+   - Secure payment method storage
+   - Handle webhook security
+   - Protect sensitive payment information
+
+================================================================================
+CROSS-DOMAIN DEPENDENCIES
+================================================================================
+
+This Domain Provides To:
+- Order Domain: PaymentAuthorized, PaymentCaptured, PaymentFailed, PaymentRefunded events
+- Payout Domain: PaymentCaptured, PaymentRefunded events (for earnings calculation)
+- Notification Domain: PaymentCreated, PaymentAuthorized, PaymentCaptured, PaymentFailed, PaymentRefunded, PaymentMethodAdded events
+
+This Domain Consumes From:
+- Order Domain: OrderCreated events (to create payments), OrderCanceled events (to process refunds)
+
+================================================================================
+TECHNICAL SCOPE
+================================================================================
+
+Technologies:
+- DynamoDB (payments, refunds, payment_methods)
+- REST API (API Gateway)
+- Lambda functions for payment processing
+- Step Functions (state machine for payment workflow)
+- External payment publisher integration (Stripe, PayPal, etc.)
+- Webhook handling
+
+Data Storage:
+- payments table
+- refunds table
+- payment_methods table
+
+API Type:
+- REST API (API Gateway)
+
+Event Communication:
+- EventBridge for publishing and consuming events
+
+External Integrations:
+- Payment publishers (Stripe, PayPal, etc.)
+- Payment publisher webhooks
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

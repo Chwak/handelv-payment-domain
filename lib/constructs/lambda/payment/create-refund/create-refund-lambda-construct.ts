@@ -1,0 +1,89 @@
+import * as cdk from 'aws-cdk-lib';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import { Construct } from 'constructs';
+import * as path from 'path';
+
+export interface CreateRefundLambdaConstructProps {
+  environment: string;
+  regionCode: string;
+  paymentsTable: dynamodb.ITable;
+  refundsTable: dynamodb.ITable;
+  removalPolicy?: cdk.RemovalPolicy;
+}
+
+export class CreateRefundLambdaConstruct extends Construct {
+  public readonly function: lambda.Function;
+
+  constructor(scope: Construct, id: string, props: CreateRefundLambdaConstructProps) {
+    super(scope, id);
+
+    const role = new iam.Role(this, 'CreateRefundLambdaRole', {
+      roleName: `${props.environment}-${props.regionCode}-payment-domain-create-refund-lambda-role`,
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      description: 'IAM role for Create Refund Lambda',
+      inlinePolicies: {
+        CloudWatchLogsAccess: new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: [
+                'logs:CreateLogGroup',
+                'logs:CreateLogStream',
+                'logs:PutLogEvents',
+              ],
+              resources: [
+                `arn:aws:logs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:log-group:/aws/lambda/${props.environment}-${props.regionCode}-payment-domain-create-refund-lambda*`,
+              ],
+            }),
+          ],
+        }),
+        DynamoDBAccess: new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
+              resources: [props.paymentsTable.tableArn, props.refundsTable.tableArn],
+            }),
+          ],
+        }),
+      },
+    });
+
+    const logGroup = new logs.LogGroup(this, 'CreateRefundLogGroup', {
+      logGroupName: `/aws/lambda/${props.environment}-${props.regionCode}-payment-domain-create-refund-lambda`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: props.removalPolicy ?? cdk.RemovalPolicy.DESTROY,
+    });
+
+    const lambdaCodePath = path.join(__dirname, '../../../../functions/lambda/payment/create-refund');
+    this.function = new lambda.Function(this, 'CreateRefundFunction', {
+      functionName: `${props.environment}-${props.regionCode}-payment-domain-create-refund-lambda`,
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'create-refund-lambda.handler',
+      code: lambda.Code.fromAsset(lambdaCodePath),
+      role,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      tracing: lambda.Tracing.DISABLED,
+      logGroup,
+      environment: {
+        ENVIRONMENT: props.environment,
+        REGION_CODE: props.regionCode,
+        PAYMENTS_TABLE_NAME: props.paymentsTable.tableName,
+        REFUNDS_TABLE_NAME: props.refundsTable.tableName,
+        LOG_LEVEL: props.environment === 'prod' ? 'ERROR' : 'INFO',
+      },
+      description: 'Create refund in DynamoDB',
+    });
+
+    props.paymentsTable.grantReadWriteData(this.function);
+    props.refundsTable.grantReadWriteData(this.function);
+
+    if (props.removalPolicy) {
+      this.function.applyRemovalPolicy(props.removalPolicy);
+    }
+  }
+}
