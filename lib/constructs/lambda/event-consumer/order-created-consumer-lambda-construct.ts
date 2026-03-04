@@ -49,7 +49,7 @@ export class OrderCreatedConsumerLambdaConstruct extends Construct {
     // Lambda function to process order.created events and initiate payment
     this.function = new lambdaNodeJs.NodejsFunction(this, 'OrderCreatedConsumerFunction', {
       functionName: `${props.environment}-${props.regionCode}-payment-order-created-consumer`,
-      entry: `${__dirname}/../../../../functions/lambda/event-consumer/order-created-consumer-lambda.ts`,
+      entry: `${__dirname}/../../../functions/lambda/event-consumer/order-created-consumer-lambda.ts`,
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_20_X,
       timeout: Duration.seconds(60),
