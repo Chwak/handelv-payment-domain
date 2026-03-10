@@ -38,7 +38,7 @@ export class PaymentDomainStack extends cdk.Stack {
     const sharedEventBus = importEventBusFromSharedInfra(this, props.environment);
     const schemaRegistryName = ssm.StringParameter.valueForStringParameter(
       this,
-      `/hand-made/${props.environment}/shared-infra/schema-registry-name`,
+      `/${props.environment}/shared-infra/glue/schema-registry-name`,
     );
 
     // Create idempotency table for payment event consumer
