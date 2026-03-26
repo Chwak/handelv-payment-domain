@@ -6,6 +6,7 @@ import * as crypto from 'crypto';
 const PAYMENTS_TABLE = process.env.PAYMENTS_TABLE_NAME;
 const REFUNDS_TABLE = process.env.REFUNDS_TABLE_NAME;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
+const WEBHOOK_MAX_AGE_SECONDS = Number(process.env.WEBHOOK_MAX_AGE_SECONDS || '300');
 
 type ApiGatewayEvent = { body?: string | null; headers?: Record<string, string> };
 
@@ -48,6 +49,19 @@ function verifySignature(body: string, signature: string, secret: string): boole
   return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(normalized));
 }
 
+function isFreshTimestamp(raw: string | null, maxAgeSeconds: number): boolean {
+  if (!raw) return true;
+  const numeric = Number(raw.trim());
+  if (!Number.isFinite(numeric)) return false;
+
+  const timestampSeconds = numeric > 10_000_000_000
+    ? Math.floor(numeric / 1000)
+    : Math.floor(numeric);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  return Math.abs(nowSeconds - timestampSeconds) <= maxAgeSeconds;
+}
+
 export const handler = async (event: ApiGatewayEvent) => {
   initTelemetryLogger(event, { domain: "payment-domain", service: "payment-webhook" });
   if (!PAYMENTS_TABLE || !REFUNDS_TABLE) throw new Error('Internal server error');
@@ -59,8 +73,14 @@ export const handler = async (event: ApiGatewayEvent) => {
   const signature =
     getHeader(event.headers, 'x-payment-signature') ||
     getHeader(event.headers, 'x-webhook-signature');
+  const timestamp =
+    getHeader(event.headers, 'x-payment-timestamp') ||
+    getHeader(event.headers, 'x-webhook-timestamp');
   if (!event.body || !signature || !verifySignature(event.body, signature, WEBHOOK_SECRET)) {
     return apiResponse(401, { message: 'Invalid signature' });
+  }
+  if (!isFreshTimestamp(timestamp, WEBHOOK_MAX_AGE_SECONDS)) {
+    return apiResponse(401, { message: 'Stale webhook timestamp' });
   }
 
   const payload = parseBody(event.body);
